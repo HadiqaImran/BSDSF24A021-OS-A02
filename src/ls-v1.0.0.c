@@ -21,13 +21,14 @@
 extern int errno;
 
 void do_ls(const char *dir, int mode);
-void do_ls_long(const char *dir);
+void do_ls_long(const char *dir, char **names, int n);
 void mode_to_string(mode_t mode, char *str);
 
 /* display modes, chosen by the command-line options */
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
 
 static int use_color = 0;   /* 1 only when output is a terminal */
+static int recursive_flag = 0;   /* set by -R */
 
 int main(int argc, char *argv[])
 {
@@ -37,7 +38,7 @@ int main(int argc, char *argv[])
     use_color = isatty(STDOUT_FILENO);   /* like ls --color=auto */
 
     /* getopt returns each option letter in turn, and -1 when done */
-    while ((opt = getopt(argc, argv, "lx")) != -1)
+    while ((opt = getopt(argc, argv, "lxR")) != -1)
     {
         switch (opt)
         {
@@ -47,8 +48,11 @@ int main(int argc, char *argv[])
         case 'x':
             mode = MODE_HORIZONTAL;
             break;
+        case 'R':
+            recursive_flag = 1;
+            break;
         default:
-            fprintf(stderr, "Usage: %s [-l | -x] [dir...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l | -x] [-R] [dir...]\n", argv[0]);
             exit(EXIT_FAILURE);
         }
     }
@@ -248,24 +252,47 @@ void print_horizontal(const char *dir, char **names, int n, int max_len)
         printf("\n");
 }
 
-/* Chooses the printing function based on the display mode */
+/* Lists one directory; with -R it then recurses into every subdirectory */
 void do_ls(const char *dir, int mode)
 {
-    if (mode == MODE_LONG)
-    {
-        do_ls_long(dir);
-        return;
-    }
-
     int n = 0, max_len = 0;
-    char **names = read_names(dir, &n, &max_len);
-    if (names == NULL)
+    char **names = read_names(dir, &n, &max_len);   /* sorted */
+    if (names == NULL)                  /* base case 1: cannot open dir */
         return;
 
-    if (mode == MODE_HORIZONTAL)
+    if (recursive_flag)
+        printf("%s:\n", dir);           /* directory header, like ls -R */
+
+    if (mode == MODE_LONG)
+        do_ls_long(dir, names, n);
+    else if (mode == MODE_HORIZONTAL)
         print_horizontal(dir, names, n, max_len);
     else
         print_columns(dir, names, n, max_len);
+
+    if (recursive_flag)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            if (strcmp(names[i], ".") == 0 || strcmp(names[i], "..") == 0)
+                continue;
+
+            /* full path parent/child (avoid a double slash) */
+            char path[4096];
+            const char *sep = (dir[strlen(dir) - 1] == '/') ? "" : "/";
+            snprintf(path, sizeof(path), "%s%s%s", dir, sep, names[i]);
+
+            struct stat st;
+            if (lstat(path, &st) == -1)
+                continue;
+            if (S_ISDIR(st.st_mode))    /* lstat: symlinks are not followed */
+            {
+                printf("\n");
+                do_ls(path, mode);      /* recursive call */
+            }
+        }
+    }
+    /* base case 2: a directory with no subdirectories makes no further call */
 
     for (int i = 0; i < n; i++)
         free(names[i]);
@@ -338,12 +365,8 @@ void get_group(gid_t gid, char *buf, size_t n)
         snprintf(buf, n, "%u", gid);
 }
 
-void do_ls_long(const char *dir)
+void do_ls_long(const char *dir, char **names, int n)
 {
-    int n = 0, max_len = 0;
-    char **names = read_names(dir, &n, &max_len);   /* already sorted */
-    if (names == NULL)
-        return;
 
     /* ---- PASS 1: find the widest value in each column + total blocks ---- */
     int w_nlink = 1, w_owner = 1, w_group = 1, w_size = 1;
@@ -417,8 +440,4 @@ void do_ls_long(const char *dir)
         }
         printf("\n");
     }
-
-    for (int i = 0; i < n; i++)
-        free(names[i]);
-    free(names);
 }
