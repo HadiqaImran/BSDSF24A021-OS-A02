@@ -16,6 +16,7 @@
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
+#include <sys/ioctl.h>
 
 extern int errno;
 
@@ -65,29 +66,112 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void do_ls(const char *dir)
+/* ===== COLUMN DISPLAY (down then across) ===== */
+
+/* Reads all non-hidden names of dir into a malloc'd array of strings.
+   Returns the array (NULL if dir can't be opened); sets *count and *max_len. */
+char **read_names(const char *dir, int *count, int *max_len)
 {
-    struct dirent *entry;
     DIR *dp = opendir(dir);
     if (dp == NULL)
     {
         fprintf(stderr, "Cannot open directory : %s\n", dir);
-        return;
+        return NULL;
     }
+
+    int capacity = 16, n = 0, longest = 0;
+    char **names = malloc(capacity * sizeof(char *));
+    if (names == NULL)
+    {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    struct dirent *entry;
     errno = 0;
     while ((entry = readdir(dp)) != NULL)
     {
         if (entry->d_name[0] == '.')
             continue;
-        printf("%s\n", entry->d_name);
-    }
 
+        if (n == capacity)          /* array full: double its size */
+        {
+            capacity *= 2;
+            names = realloc(names, capacity * sizeof(char *));
+            if (names == NULL)
+            {
+                perror("realloc");
+                exit(EXIT_FAILURE);
+            }
+        }
+        names[n] = strdup(entry->d_name);
+        if (names[n] == NULL)
+        {
+            perror("strdup");
+            exit(EXIT_FAILURE);
+        }
+        int len = (int)strlen(names[n]);
+        if (len > longest)
+            longest = len;
+        n++;
+    }
     if (errno != 0)
-    {
         perror("readdir failed");
-    }
-
     closedir(dp);
+
+    *count = n;
+    *max_len = longest;
+    return names;
+}
+
+/* Terminal width in columns; falls back to 80 if ioctl fails */
+int get_term_width(void)
+{
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1 || w.ws_col == 0)
+        return 80;
+    return w.ws_col;
+}
+
+/* Prints names in columns, filled down first and then across */
+void print_columns(char **names, int n, int max_len)
+{
+    if (n == 0)
+        return;
+
+    int col_width = max_len + 2;
+    int cols = get_term_width() / col_width;
+    if (cols < 1)
+        cols = 1;
+    if (cols > n)
+        cols = n;
+    int rows = (n + cols - 1) / cols;       /* ceiling of n / cols */
+
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols; c++)
+        {
+            int idx = r + c * rows;         /* down-then-across index */
+            if (idx >= n)
+                break;
+            printf("%-*s", col_width, names[idx]);
+        }
+        printf("\n");
+    }
+}
+
+void do_ls(const char *dir)
+{
+    int n = 0, max_len = 0;
+    char **names = read_names(dir, &n, &max_len);
+    if (names == NULL)
+        return;
+
+    print_columns(names, n, max_len);
+
+    for (int i = 0; i < n; i++)
+        free(names[i]);
+    free(names);
 }
 
 /* ===== LONG LISTING ===== */
