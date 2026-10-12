@@ -15,3 +15,11 @@ All names are first read into an array, and the longest name is found. The colum
 
 **Q2. Purpose of ioctl. Limitations of a fixed 80-column fallback?**
 ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) asks the terminal driver for the current window size and fills struct winsize, where ws_col is the width in characters. This lets the program fit as many columns as the real terminal allows and adapt when the window is resized between runs. With only a fixed 80 columns, a wide terminal would waste space (fewer columns than could fit), and a narrower terminal would make long lines wrap and break the alignment. The layout also could not react to different window sizes at all.
+
+## Feature 4: ls-v1.3.0 (Horizontal Display, -x)
+
+**Q1. Complexity of "down then across" versus "across" printing. Which needs more pre-calculation?**
+The vertical (down then across) layout is more complex. Before printing anything it must know the total number of names, the longest name, the number of columns that fit, and then the number of rows (ceiling of n / columns). Printing then needs nested loops and index arithmetic (names[r + c * rows]) to jump through the array. The horizontal layout needs only the column width and the terminal width. It is a single loop over the array that keeps a running horizontal position, prints each name padded to the column width, and starts a new line when the next name would not fit. It never needs the number of rows, because the names are printed in their natural order.
+
+**Q2. Strategy for managing the display modes (-l, -x, default).**
+A mode variable (an enum with MODE_DEFAULT, MODE_LONG and MODE_HORIZONTAL) is set in the getopt loop in main: -l sets MODE_LONG and -x sets MODE_HORIZONTAL, so if both are given the last one wins. main passes the mode to do_ls(dir, mode). Inside do_ls, if the mode is MODE_LONG it calls do_ls_long(); otherwise it reads all the names into an array and calls print_horizontal() for MODE_HORIZONTAL or print_columns() (down then across) for the default mode. Adding a new mode only needs a new constant, a new option letter and a new branch.

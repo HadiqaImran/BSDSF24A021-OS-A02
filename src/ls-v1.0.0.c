@@ -20,25 +20,31 @@
 
 extern int errno;
 
-void do_ls(const char *dir);
+void do_ls(const char *dir, int mode);
 void do_ls_long(const char *dir);
 void mode_to_string(mode_t mode, char *str);
+
+/* display modes, chosen by the command-line options */
+enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
 
 int main(int argc, char *argv[])
 {
     int opt;
-    int long_flag = 0;
+    int mode = MODE_DEFAULT;
 
     /* getopt returns each option letter in turn, and -1 when done */
-    while ((opt = getopt(argc, argv, "l")) != -1)
+    while ((opt = getopt(argc, argv, "lx")) != -1)
     {
         switch (opt)
         {
         case 'l':
-            long_flag = 1;
+            mode = MODE_LONG;
+            break;
+        case 'x':
+            mode = MODE_HORIZONTAL;
             break;
         default:
-            fprintf(stderr, "Usage: %s [-l] [dir...]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-l | -x] [dir...]\n", argv[0]);
             exit(EXIT_FAILURE);
         }
     }
@@ -46,20 +52,14 @@ int main(int argc, char *argv[])
     /* optind = index of the first non-option argument (first directory) */
     if (optind == argc)
     {
-        if (long_flag)
-            do_ls_long(".");
-        else
-            do_ls(".");
+        do_ls(".", mode);
     }
     else
     {
         for (int i = optind; i < argc; i++)
         {
             printf("Directory listing of %s : \n", argv[i]);
-            if (long_flag)
-                do_ls_long(argv[i]);
-            else
-                do_ls(argv[i]);
+            do_ls(argv[i], mode);
             puts("");
         }
     }
@@ -160,14 +160,45 @@ void print_columns(char **names, int n, int max_len)
     }
 }
 
-void do_ls(const char *dir)
+/* Prints names left to right, wrapping when the next one would not fit */
+void print_horizontal(char **names, int n, int max_len)
 {
+    int col_width = max_len + 2;
+    int term_width = get_term_width();
+    int pos = 0;                            /* current horizontal position */
+
+    for (int i = 0; i < n; i++)
+    {
+        if (pos > 0 && pos + col_width > term_width)
+        {
+            printf("\n");                   /* line is full: start a new one */
+            pos = 0;
+        }
+        printf("%-*s", col_width, names[i]);
+        pos += col_width;
+    }
+    if (n > 0)
+        printf("\n");
+}
+
+/* Chooses the printing function based on the display mode */
+void do_ls(const char *dir, int mode)
+{
+    if (mode == MODE_LONG)
+    {
+        do_ls_long(dir);
+        return;
+    }
+
     int n = 0, max_len = 0;
     char **names = read_names(dir, &n, &max_len);
     if (names == NULL)
         return;
 
-    print_columns(names, n, max_len);
+    if (mode == MODE_HORIZONTAL)
+        print_horizontal(names, n, max_len);
+    else
+        print_columns(names, n, max_len);
 
     for (int i = 0; i < n; i++)
         free(names[i]);
