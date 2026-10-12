@@ -27,10 +27,14 @@ void mode_to_string(mode_t mode, char *str);
 /* display modes, chosen by the command-line options */
 enum { MODE_DEFAULT, MODE_LONG, MODE_HORIZONTAL };
 
+static int use_color = 0;   /* 1 only when output is a terminal */
+
 int main(int argc, char *argv[])
 {
     int opt;
     int mode = MODE_DEFAULT;
+
+    use_color = isatty(STDOUT_FILENO);   /* like ls --color=auto */
 
     /* getopt returns each option letter in turn, and -1 when done */
     while ((opt = getopt(argc, argv, "lx")) != -1)
@@ -135,6 +139,58 @@ char **read_names(const char *dir, int *count, int *max_len)
     return names;
 }
 
+/* ===== COLORS ===== */
+
+#define COLOR_RESET   "\033[0m"
+#define COLOR_BLUE    "\033[0;34m"
+#define COLOR_GREEN   "\033[0;32m"
+#define COLOR_RED     "\033[0;31m"
+#define COLOR_PINK    "\033[0;35m"
+#define COLOR_REVERSE "\033[7m"
+
+/* 1 if name ends with suffix */
+int ends_with(const char *name, const char *suffix)
+{
+    size_t ln = strlen(name), lsuf = strlen(suffix);
+    return ln >= lsuf && strcmp(name + ln - lsuf, suffix) == 0;
+}
+
+/* Returns the escape code for this file's type ("" = no color) */
+const char *get_color(const char *dir, const char *name)
+{
+    if (!use_color)
+        return "";
+
+    char path[4096];
+    struct stat st;
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (lstat(path, &st) == -1)
+        return "";
+
+    mode_t m = st.st_mode;
+    if (S_ISLNK(m))
+        return COLOR_PINK;
+    if (S_ISDIR(m))
+        return COLOR_BLUE;
+    if (S_ISCHR(m) || S_ISBLK(m) || S_ISFIFO(m) || S_ISSOCK(m))
+        return COLOR_REVERSE;
+    if (ends_with(name, ".tar") || ends_with(name, ".gz") || ends_with(name, ".zip"))
+        return COLOR_RED;
+    if (m & (S_IXUSR | S_IXGRP | S_IXOTH))
+        return COLOR_GREEN;
+    return "";
+}
+
+/* Prints name in its color, then pads with spaces up to width. The padding
+   is done by hand because escape codes would break printf's %-*s width. */
+void print_colored(const char *dir, const char *name, int width)
+{
+    const char *color = get_color(dir, name);
+    printf("%s%s%s", color, name, color[0] ? COLOR_RESET : "");
+    for (int pad = width - (int)strlen(name); pad > 0; pad--)
+        putchar(' ');
+}
+
 /* Terminal width in columns; falls back to 80 if ioctl fails */
 int get_term_width(void)
 {
@@ -145,7 +201,7 @@ int get_term_width(void)
 }
 
 /* Prints names in columns, filled down first and then across */
-void print_columns(char **names, int n, int max_len)
+void print_columns(const char *dir, char **names, int n, int max_len)
 {
     if (n == 0)
         return;
@@ -165,14 +221,14 @@ void print_columns(char **names, int n, int max_len)
             int idx = r + c * rows;         /* down-then-across index */
             if (idx >= n)
                 break;
-            printf("%-*s", col_width, names[idx]);
+            print_colored(dir, names[idx], col_width);
         }
         printf("\n");
     }
 }
 
 /* Prints names left to right, wrapping when the next one would not fit */
-void print_horizontal(char **names, int n, int max_len)
+void print_horizontal(const char *dir, char **names, int n, int max_len)
 {
     int col_width = max_len + 2;
     int term_width = get_term_width();
@@ -185,7 +241,7 @@ void print_horizontal(char **names, int n, int max_len)
             printf("\n");                   /* line is full: start a new one */
             pos = 0;
         }
-        printf("%-*s", col_width, names[i]);
+        print_colored(dir, names[i], col_width);
         pos += col_width;
     }
     if (n > 0)
@@ -207,9 +263,9 @@ void do_ls(const char *dir, int mode)
         return;
 
     if (mode == MODE_HORIZONTAL)
-        print_horizontal(names, n, max_len);
+        print_horizontal(dir, names, n, max_len);
     else
-        print_columns(names, n, max_len);
+        print_columns(dir, names, n, max_len);
 
     for (int i = 0; i < n; i++)
         free(names[i]);
@@ -340,12 +396,13 @@ void do_ls_long(const char *dir)
         else
             snprintf(datebuf, sizeof(datebuf), "%.12s", t + 4);
 
-        printf("%s %*lu %-*s %-*s %*ld %s %s", perms,
+        printf("%s %*lu %-*s %-*s %*ld %s ", perms,
                w_nlink, (unsigned long)st.st_nlink,
                w_owner, owner,
                w_group, group,
                w_size, (long)st.st_size,
-               datebuf, names[i]);
+               datebuf);
+        print_colored(dir, names[i], 0);
 
         /* symbolic link: also show where it points */
         if (S_ISLNK(st.st_mode))

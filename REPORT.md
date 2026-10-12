@@ -31,3 +31,11 @@ readdir() returns entries in the order the filesystem stores them, which is arbi
 
 **Q2. Purpose and signature of the qsort() comparison function. Why const void * arguments?**
 qsort() is a generic function that does not know the element type, so the caller supplies a function that defines the order: int compare(const void *a, const void *b). It must return a negative value if a should come before b, zero if they are equal and a positive value if a should come after b. qsort() calls it with pointers to two elements of the array. Since our elements are char * (strings), the arguments are really char **, so the function casts them with *(const char **)a and then calls strcmp() on the strings. The parameters are const void * because void * lets qsort() work with any element type without knowing it, and const promises that the comparison will not modify the data being sorted.
+
+## Feature 6: ls-v1.5.0 (Colorized Output)
+
+**Q1. How do ANSI escape codes produce color? Show the sequence for green text.**
+ANSI escape codes are special character sequences that the terminal interprets as commands instead of printing them. A sequence starts with the ESC character (\033, octal for decimal 27), followed by "[", one or more numeric parameters separated by ";", and ends with "m" (the Select Graphic Rendition command). For example, 31 selects red, 32 green, 34 blue and 35 magenta (pink) as the text color, and 7 selects reverse video. The color stays active until it is reset, so after the text we print \033[0m to return to the default. Green text: printf("\033[0;32m%s\033[0m", name); where \033[0;32m switches to green (0 = normal style, 32 = green), name is printed in green, and \033[0m resets the terminal.
+
+**Q2. Which st_mode bits decide whether a file is executable?**
+Three separate permission bits exist: S_IXUSR (0100) for the owner, S_IXGRP (0010) for the group and S_IXOTH (0001) for everyone else. A file is executable by its owner if (st_mode & S_IXUSR) is non-zero, by its group if (st_mode & S_IXGRP) is non-zero, and by others if (st_mode & S_IXOTH) is non-zero. To test for "executable by anyone", I use (st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)). Directories also have execute bits (meaning "may enter"), so the code checks for a directory first and only colors the remaining files green.
