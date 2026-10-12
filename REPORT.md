@@ -23,3 +23,11 @@ The vertical (down then across) layout is more complex. Before printing anything
 
 **Q2. Strategy for managing the display modes (-l, -x, default).**
 A mode variable (an enum with MODE_DEFAULT, MODE_LONG and MODE_HORIZONTAL) is set in the getopt loop in main: -l sets MODE_LONG and -x sets MODE_HORIZONTAL, so if both are given the last one wins. main passes the mode to do_ls(dir, mode). Inside do_ls, if the mode is MODE_LONG it calls do_ls_long(); otherwise it reads all the names into an array and calls print_horizontal() for MODE_HORIZONTAL or print_columns() (down then across) for the default mode. Adding a new mode only needs a new constant, a new option letter and a new branch.
+
+## Feature 5: ls-v1.4.0 (Alphabetical Sort)
+
+**Q1. Why must all directory entries be read into memory before sorting? Drawbacks for directories with millions of files?**
+readdir() returns entries in the order the filesystem stores them, which is arbitrary, not alphabetical. The alphabetically first name could be the very last entry returned, so nothing can be printed correctly until every entry has been seen; sorting needs all the data available to compare. The drawbacks with millions of files are: memory use grows with the number of files (one pointer plus one allocated string per name), sorting costs O(n log n) time, no output appears at all until reading and sorting have finished (long delay), and the program may run out of memory (malloc/realloc failure). An unsorted listing could instead be streamed entry by entry using constant memory.
+
+**Q2. Purpose and signature of the qsort() comparison function. Why const void * arguments?**
+qsort() is a generic function that does not know the element type, so the caller supplies a function that defines the order: int compare(const void *a, const void *b). It must return a negative value if a should come before b, zero if they are equal and a positive value if a should come after b. qsort() calls it with pointers to two elements of the array. Since our elements are char * (strings), the arguments are really char **, so the function casts them with *(const char **)a and then calls strcmp() on the strings. The parameters are const void * because void * lets qsort() work with any element type without knowing it, and const promises that the comparison will not modify the data being sorted.

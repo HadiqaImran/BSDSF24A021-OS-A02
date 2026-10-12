@@ -68,6 +68,15 @@ int main(int argc, char *argv[])
 
 /* ===== COLUMN DISPLAY (down then across) ===== */
 
+/* Comparison function for qsort: a and b point to elements of the array,
+   and each element is a char *, so a and b are really char ** */
+int compare_names(const void *a, const void *b)
+{
+    const char *s1 = *(const char **)a;
+    const char *s2 = *(const char **)b;
+    return strcmp(s1, s2);
+}
+
 /* Reads all non-hidden names of dir into a malloc'd array of strings.
    Returns the array (NULL if dir can't be opened); sets *count and *max_len. */
 char **read_names(const char *dir, int *count, int *max_len)
@@ -118,6 +127,8 @@ char **read_names(const char *dir, int *count, int *max_len)
     if (errno != 0)
         perror("readdir failed");
     closedir(dp);
+
+    qsort(names, n, sizeof(char *), compare_names);
 
     *count = n;
     *max_len = longest;
@@ -273,13 +284,10 @@ void get_group(gid_t gid, char *buf, size_t n)
 
 void do_ls_long(const char *dir)
 {
-    struct dirent *entry;
-    DIR *dp = opendir(dir);
-    if (dp == NULL)
-    {
-        fprintf(stderr, "Cannot open directory : %s\n", dir);
+    int n = 0, max_len = 0;
+    char **names = read_names(dir, &n, &max_len);   /* already sorted */
+    if (names == NULL)
         return;
-    }
 
     /* ---- PASS 1: find the widest value in each column + total blocks ---- */
     int w_nlink = 1, w_owner = 1, w_group = 1, w_size = 1;
@@ -287,12 +295,9 @@ void do_ls_long(const char *dir)
     char path[4096], owner[32], group[32];
     struct stat st;
 
-    errno = 0;
-    while ((entry = readdir(dp)) != NULL)
+    for (int i = 0; i < n; i++)
     {
-        if (entry->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         if (lstat(path, &st) == -1)
             continue;
 
@@ -306,19 +311,14 @@ void do_ls_long(const char *dir)
         if ((w = num_width((long)st.st_size)) > w_size)   w_size = w;
         total_blocks += st.st_blocks;
     }
-    if (errno != 0)
-        perror("readdir failed");
 
     /* ls counts 1024-byte blocks, st_blocks counts 512-byte blocks */
     printf("total %ld\n", total_blocks / 2);
 
-    /* ---- PASS 2: go back to the start and print every line ---- */
-    rewinddir(dp);
-    while ((entry = readdir(dp)) != NULL)
+    /* ---- PASS 2: print every line ---- */
+    for (int i = 0; i < n; i++)
     {
-        if (entry->d_name[0] == '.')
-            continue;
-        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         if (lstat(path, &st) == -1)
         {
             perror(path);
@@ -330,7 +330,8 @@ void do_ls_long(const char *dir)
         get_owner(st.st_uid, owner, sizeof(owner));
         get_group(st.st_gid, group, sizeof(group));
 
-        /* ctime gives "Tue Oct 13 04:05:00 2026\n": skip weekday, keep 12 chars */
+        /* ctime gives "Tue Oct 13 04:05:00 2026\n"; recent files show the
+           time, files older than ~6 months (or in the future) show the year */
         char *t = ctime(&st.st_mtime);
         char datebuf[16];
         time_t now = time(NULL);
@@ -344,7 +345,7 @@ void do_ls_long(const char *dir)
                w_owner, owner,
                w_group, group,
                w_size, (long)st.st_size,
-               datebuf, entry->d_name);
+               datebuf, names[i]);
 
         /* symbolic link: also show where it points */
         if (S_ISLNK(st.st_mode))
@@ -359,5 +360,8 @@ void do_ls_long(const char *dir)
         }
         printf("\n");
     }
-    closedir(dp);
+
+    for (int i = 0; i < n; i++)
+        free(names[i]);
+    free(names);
 }
